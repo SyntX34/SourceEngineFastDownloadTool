@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*' # Trigger on version tags like v1.0.0
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch:
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -19,20 +19,14 @@ jobs:
           - os: windows-latest
             runtime: win-x64
             extension: .exe
-            shell: pwsh
           - os: ubuntu-latest
             runtime: linux-x64
             extension: ''
-            shell: bash
           - os: ubuntu-latest
             runtime: linux-arm64
             extension: ''
-            shell: bash
 
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: ${{ matrix.shell }}
 
     steps:
     - name: Checkout code
@@ -51,7 +45,23 @@ jobs:
     - name: Build application
       run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
 
-    - name: Publish single executable
+    - name: Publish single executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        dotnet publish `
+          --configuration $env:BUILD_CONFIGURATION `
+          --runtime ${{ matrix.runtime }} `
+          --self-contained true `
+          --output ./publish-${{ matrix.runtime }} `
+          -p:PublishSingleFile=true `
+          -p:IncludeNativeLibrariesForSelfExtract=true `
+          -p:IncludeAllContentForSelfExtract=true `
+          -p:DebugType=None `
+          -p:DebugSymbols=false `
+          -p:EnableCompressionInSingleFile=true
+
+    - name: Publish single executable (Linux)
+      if: matrix.os != 'windows-latest'
       run: |
         dotnet publish \
           --configuration ${{ env.BUILD_CONFIGURATION }} \
@@ -88,7 +98,7 @@ jobs:
 
     - name: Create ZIP archive
       run: |
-        version="${GITHUB_REF##*/}" # extracts tag name like v1.0.0
+        version="${GITHUB_REF##*/}"
         zipName="${{ env.PROJECT_NAME }}-${version}-${{ matrix.runtime }}.zip"
         cd release-assets-${{ matrix.runtime }}
         zip -r "../$zipName" ./*
