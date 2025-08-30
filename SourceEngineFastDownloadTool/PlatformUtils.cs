@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace SourceEngineFastDownloadTool
@@ -31,6 +32,33 @@ namespace SourceEngineFastDownloadTool
             else
             {
                 return path.Replace("\\", "/");
+            }
+        }
+
+        public static void SetFilePermissions(string path)
+        {
+            try
+            {
+                if (IsLinux || IsOSX)
+                {
+                    var process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "chmod",
+                            Arguments = $"777 \"{path}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+
+                    process.Start();
+                    process.WaitForExit();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error setting permissions on {path}: {ex.Message}");
             }
         }
     }

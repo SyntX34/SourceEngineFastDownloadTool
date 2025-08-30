@@ -7,18 +7,18 @@
     "Servers": [
         {
             "Name": "ZombieMod",
-            "Source": "C:\\Games\\ZombieMod\\cstrike",
-            "Destination": "C:\\FastDL\\css_zm\\cstrike"
+            "Source": "/home/ubuntu/ZombieMod/cstrike",
+            "Destination": "/var/www/html/fastdl/css_zm/cstrike"
         },
         {
             "Name": "ZombieHorde",
-            "Source": "C:\\Games\\ZombieHorde\\cstrike",
-            "Destination": "C:\\FastDL\\css_zh\\cstrike"
+            "Source": "/home/ubuntu/ZombieHorde/cstrike",
+            "Destination": "/var/www/html/fastdl/css_zh/cstrike"
         },
         {
             "Name": "ZombieRiot",
-            "Source": "C:\\Games\\ZombieRiot\\cstrike",
-            "Destination": "C:\\FastDL\\css_zr\\cstrike"
+            "Source": "/home/ubuntu/ZombieRiot/cstrike",
+            "Destination": "/var/www/html/fastdl/css_zr/cstrike"
         }
     ]
 }

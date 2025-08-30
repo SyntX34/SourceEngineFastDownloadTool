@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -78,9 +79,56 @@ namespace SourceEngineFastDownloadTool
             return files;
         }
 
-        public static int ProcessFiles(string sourceDir, string destDir, HashSet<string> processedFiles, HashSet<string> extensions)
+        public static void DisplayDebugInfo(string sourceDir, HashSet<string> extensions)
+        {
+            Console.WriteLine($"=== DEBUG INFO ===");
+            Console.WriteLine($"Source Directory: {sourceDir}");
+            Console.WriteLine($"Directory Exists: {Directory.Exists(sourceDir)}");
+
+            if (Directory.Exists(sourceDir))
+            {
+                try
+                {
+                    var allFiles = Directory.GetFiles(sourceDir, "*.*", SearchOption.AllDirectories);
+                    Console.WriteLine($"Total Files Found: {allFiles.Length}");
+
+                    var matchingFiles = allFiles.Where(file => extensions.Contains(Path.GetExtension(file).ToLower())).ToList();
+                    Console.WriteLine($"Matching Files: {matchingFiles.Count}");
+
+                    if (matchingFiles.Count > 0)
+                    {
+                        Console.WriteLine("First 10 matching files:");
+                        foreach (var file in matchingFiles.Take(10))
+                        {
+                            Console.WriteLine($"  - {file}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error scanning directory: {ex.Message}");
+                }
+            }
+            Console.WriteLine($"==================");
+        }
+
+        public static int ProcessFiles(string sourceDir, string destDir, HashSet<string> processedFiles, HashSet<string> extensions, string processedFilesPath)
         {
             int processedCount = 0;
+            bool hasNewProcessedFiles = false;
+
+            if (DebugLogs)
+            {
+                DisplayDebugInfo(sourceDir, extensions);
+            }
+
+            if (!Directory.Exists(sourceDir))
+            {
+                if (DebugLogs)
+                    Console.WriteLine($"  [DEBUG] Source directory does not exist: {sourceDir}");
+                return 0;
+            }
+
             var files = GetAllFiles(sourceDir, extensions);
 
             if (DebugLogs)
@@ -88,89 +136,166 @@ namespace SourceEngineFastDownloadTool
 
             foreach (var file in files)
             {
-                if (ProcessFile(file, sourceDir, destDir, processedFiles))
+                var result = ProcessFile(file, sourceDir, destDir, processedFiles);
+
+                if (result.WasProcessed)
                 {
                     processedCount++;
+                    hasNewProcessedFiles = true;
 
                     if (processedCount % 10 == 0)
                     {
                         Console.WriteLine($"Processed {processedCount} files...");
+                        ConfigManager.SaveProcessedFiles(processedFilesPath, processedFiles);
                     }
                 }
+
+                if (result.ShouldSkipInFuture)
+                {
+                    hasNewProcessedFiles = true;
+                }
+            }
+
+            if (hasNewProcessedFiles)
+            {
+                ConfigManager.SaveProcessedFiles(processedFilesPath, processedFiles);
+                if (DebugLogs)
+                    Console.WriteLine($"  [DEBUG] Saved {processedFiles.Count} processed files to {processedFilesPath}");
             }
 
             return processedCount;
         }
 
-        public static bool ProcessFile(string filePath, string sourceDir, string destDir, HashSet<string> processedFiles)
+        public static ProcessResult ProcessFile(string filePath, string sourceDir, string destDir, HashSet<string> processedFiles)
         {
-            if (processedFiles.Contains(filePath))
+            string fullFilePath = Path.GetFullPath(filePath);
+
+ 
+            if (processedFiles.Contains(fullFilePath))
             {
                 if (DebugLogs)
-                    Console.WriteLine($"  [DEBUG] Already processed: {filePath}");
-                return false;
+                    Console.WriteLine($"  [DEBUG] Already processed: {fullFilePath}");
+                return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = false };
             }
 
             if (IsFileInUse(filePath) || IsFileGrowing(filePath))
             {
-                return false;
+                if (DebugLogs)
+                    Console.WriteLine($"  [DEBUG] File in use or growing, skipping: {fullFilePath}");
+                return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = false };
             }
 
             try
             {
-                string relativePath = GetRelativePath(filePath, sourceDir);
+                string relativePath = GetRelativePathWithoutUri(filePath, sourceDir);
                 string destPath = Path.Combine(destDir, relativePath);
+
                 string fileName = Path.GetFileName(destPath);
-                string directory = Path.GetDirectoryName(destPath);
-                destPath = Path.Combine(directory, fileName + ".bz2");
+                string? directory = Path.GetDirectoryName(destPath);
+
+                if (string.IsNullOrEmpty(directory))
+                {
+                    if (DebugLogs)
+                        Console.WriteLine($"  [DEBUG] Invalid directory path: {destPath}");
+                    return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = false };
+                }
+
+                string compressedDestPath = Path.Combine(directory, fileName + ".bz2");
 
                 if (DebugLogs)
                 {
+                    Console.WriteLine($"  [DEBUG] Processing: {fullFilePath}");
                     Console.WriteLine($"  [DEBUG] Relative path: {relativePath}");
-                    Console.WriteLine($"  [DEBUG] Destination: {destPath}");
+                    Console.WriteLine($"  [DEBUG] Destination: {compressedDestPath}");
                 }
 
-                Directory.CreateDirectory(Path.GetDirectoryName(destPath));
+                Directory.CreateDirectory(directory);
 
-                if (File.Exists(destPath))
+                if (File.Exists(compressedDestPath))
                 {
                     if (DebugLogs)
-                        Console.WriteLine($"  [DEBUG] Destination file already exists: {destPath}");
+                        Console.WriteLine($"  [DEBUG] Compressed file already exists: {compressedDestPath}");
 
-                    processedFiles.Add(filePath);
-                    return false;
+                    processedFiles.Add(fullFilePath);
+                    return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = true };
                 }
 
                 if (DebugLogs)
-                    Console.WriteLine($"  [DEBUG] Compressing: {filePath} -> {destPath}");
+                    Console.WriteLine($"  [DEBUG] Compressing: {fullFilePath} -> {compressedDestPath}");
 
-                if (CompressionManager.CompressFile(filePath, destPath))
+                if (CompressionManager.CompressFile(filePath, compressedDestPath))
                 {
                     if (DebugLogs)
-                        Console.WriteLine($"  [DEBUG] Successfully compressed: {filePath} -> {destPath}");
+                        Console.WriteLine($"  [DEBUG] Successfully compressed: {fullFilePath} -> {compressedDestPath}");
 
-                    processedFiles.Add(filePath);
-                    return true;
+                    SetLinuxPermissions(compressedDestPath);
+
+                    processedFiles.Add(fullFilePath);
+                    return new ProcessResult { WasProcessed = true, ShouldSkipInFuture = true };
                 }
                 else
                 {
                     if (DebugLogs)
-                        Console.WriteLine($"  [DEBUG] Compression failed: {filePath}");
+                        Console.WriteLine($"  [DEBUG] Compression failed: {fullFilePath}");
+
+                    return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = false };
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error processing file {filePath}: {ex.Message}");
+                Console.WriteLine($"Error processing file {fullFilePath}: {ex.Message}");
+                return new ProcessResult { WasProcessed = false, ShouldSkipInFuture = false };
+            }
+        }
+
+        private static string GetRelativePathWithoutUri(string fullPath, string basePath)
+        {
+            fullPath = Path.GetFullPath(fullPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            basePath = Path.GetFullPath(basePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (!fullPath.StartsWith(basePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath;
             }
 
-            return false;
+            return fullPath.Substring(basePath.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         }
 
-        private static string GetRelativePath(string fullPath, string basePath)
+        private static void SetLinuxPermissions(string filePath)
         {
-            Uri pathUri = new Uri(fullPath);
-            Uri baseUri = new Uri(basePath + Path.DirectorySeparatorChar);
-            return Uri.UnescapeDataString(baseUri.MakeRelativeUri(pathUri).ToString());
+            try
+            {
+                if (Environment.OSVersion.Platform == PlatformID.Unix ||
+                    Environment.OSVersion.Platform == PlatformID.MacOSX)
+                {
+                    var process = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "chmod",
+                            Arguments = $"777 \"{filePath}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true
+                        }
+                    };
+
+                    process.Start();
+                    process.WaitForExit();
+                }
+            }
+            catch (Exception ex)
+            {
+                if (DebugLogs)
+                    Console.WriteLine($"  [DEBUG] Error setting permissions: {ex.Message}");
+            }
         }
+    }
+
+    public class ProcessResult
+    {
+        public bool WasProcessed { get; set; }
+        public bool ShouldSkipInFuture { get; set; }
     }
 }
