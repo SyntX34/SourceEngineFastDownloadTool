@@ -32,13 +32,21 @@ namespace SourceEngineFastDownloadTool
                 if (File.Exists(configPath))
                 {
                     string json = File.ReadAllText(configPath);
-                    return JsonConvert.DeserializeObject<AppConfig>(json) ?? new AppConfig();
+                    var config = JsonConvert.DeserializeObject<AppConfig>(json) ?? new AppConfig();
+                    
+                    foreach (var server in config.Servers)
+                    {
+                        server.Source = NormalizePath(server.Source);
+                        server.Destination = NormalizePath(server.Destination);
+                    }
+                    
+                    return config;
                 }
                 else
                 {
                     Console.WriteLine($"Config file not found: {configPath}");
                     Console.WriteLine("Creating default config...");
-                    var defaultConfig = new AppConfig();
+                    var defaultConfig = CreateDefaultConfig();
                     SaveConfig(configPath, defaultConfig);
                     return defaultConfig;
                 }
@@ -46,8 +54,29 @@ namespace SourceEngineFastDownloadTool
             catch (Exception ex)
             {
                 Console.WriteLine($"Error loading config: {ex.Message}");
-                return new AppConfig();
+                return CreateDefaultConfig();
             }
+        }
+
+        private static AppConfig CreateDefaultConfig()
+        {
+            return new AppConfig
+            {
+                CheckInterval = 120,
+                FileTypes = "mp3,vtx,bsp,nav,mdl,phy,vmt,vtf,dx80.vtx,dx90.vtx,sw.vtx,wav",
+                ProcessedFilesPath = "processed_files.txt",
+                Run24x7 = true,
+                DebugLogs = false,
+                Servers = new List<ServerConfig>
+                {
+                    new ServerConfig
+                    {
+                        Name = "Example Server",
+                        Source = PlatformUtils.IsWindows ? @"C:\GameServer\cstrike" : "/home/user/gameserver/cstrike",
+                        Destination = PlatformUtils.IsWindows ? @"C:\FastDL\cstrike" : "/var/www/html/fastdl/cstrike"
+                    }
+                }
+            };
         }
 
         public static bool SaveConfig(string configPath, AppConfig config)
@@ -109,9 +138,12 @@ namespace SourceEngineFastDownloadTool
                     {
                         if (!string.IsNullOrWhiteSpace(line))
                         {
-                            processedFiles.Add(line.Trim());
+                            string normalizedPath = NormalizePath(line.Trim());
+                            processedFiles.Add(normalizedPath);
                         }
                     }
+                    
+                    Console.WriteLine($"Loaded {processedFiles.Count} processed files from {filePath}");
                 }
                 else
                 {
@@ -132,13 +164,64 @@ namespace SourceEngineFastDownloadTool
         {
             try
             {
-                File.WriteAllLines(filePath, processedFiles);
+                string backupPath = filePath + ".backup";
+                if (File.Exists(filePath))
+                {
+                    File.Copy(filePath, backupPath, true);
+                }
+
+                var sortedFiles = processedFiles.OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
+                
+                string tempPath = filePath + ".tmp";
+                File.WriteAllLines(tempPath, sortedFiles);
+                
+                if (File.Exists(filePath))
+                {
+                    File.Delete(filePath);
+                }
+                File.Move(tempPath, filePath);
+
+                if (File.Exists(backupPath))
+                {
+                    try { File.Delete(backupPath); } catch { }
+                }
+
                 return true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error saving processed files: {ex.Message}");
+                
+                string backupPath = filePath + ".backup";
+                if (File.Exists(backupPath) && !File.Exists(filePath))
+                {
+                    try
+                    {
+                        File.Copy(backupPath, filePath, true);
+                        Console.WriteLine("Restored processed files from backup.");
+                    }
+                    catch (Exception backupEx)
+                    {
+                        Console.WriteLine($"Failed to restore backup: {backupEx.Message}");
+                    }
+                }
+
                 return false;
+            }
+        }
+
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return path;
+
+            if (PlatformUtils.IsWindows)
+            {
+                return path.Replace('/', '\\');
+            }
+            else
+            {
+                return path.Replace('\\', '/');
             }
         }
     }
