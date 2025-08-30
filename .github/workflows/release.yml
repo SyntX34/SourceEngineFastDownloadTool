@@ -1,10 +1,10 @@
-name: Build and Release
+name: Build and Release Multi-Platform
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+  workflow_dispatch: 
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -12,8 +12,20 @@ env:
   BUILD_CONFIGURATION: 'Release'
 
 jobs:
-  build-and-release:
-    runs-on: windows-latest
+  build-multi-platform:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            runtime: win-x64
+            extension: .exe
+          - os: ubuntu-latest
+            runtime: linux-x64
+            extension: ''
+          - os: ubuntu-latest
+            runtime: linux-arm64
+            extension: ''
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
@@ -36,9 +48,9 @@ jobs:
       run: |
         dotnet publish `
           --configuration ${{ env.BUILD_CONFIGURATION }} `
-          --runtime win-x64 `
+          --runtime ${{ matrix.runtime }} `
           --self-contained true `
-          --output ./publish `
+          --output ./publish-${{ matrix.runtime }} `
           -p:PublishSingleFile=true `
           -p:IncludeNativeLibrariesForSelfExtract=true `
           -p:IncludeAllContentForSelfExtract=true `
@@ -46,36 +58,68 @@ jobs:
           -p:DebugSymbols=false `
           -p:EnableCompressionInSingleFile=true
 
-    - name: Create release assets directory
+    - name: Create release assets for platform
       run: |
-        mkdir release-assets
-        Copy-Item -Path "config.json" -Destination "release-assets\" -ErrorAction SilentlyContinue
-        Copy-Item -Path "filetypes.txt" -Destination "release-assets\" -ErrorAction SilentlyContinue
-        Copy-Item -Path ".\publish\${{ env.PROJECT_NAME }}.exe" -Destination "release-assets\"
-        # Create a batch file for easy execution
-        Set-Content -Path ".\release-assets\RunFastDLTool.bat" -Value "@echo off`r`necho Starting Source Engine FastDownload Tool...`r`necho.`r`necho %~dp0${{ env.PROJECT_NAME }}.exe %*`r`npause"
+        mkdir release-assets-${{ matrix.runtime }}
+        # Copy configuration files
+        cp config.json release-assets-${{ matrix.runtime }}/ 2>/dev/null || echo "config.json not found"
+        cp filetypes.txt release-assets-${{ matrix.runtime }}/ 2>/dev/null || echo "filetypes.txt not found"
+        
+        # Copy the executable
+        cp ./publish-${{ matrix.runtime }}/${{ env.PROJECT_NAME }}${{ matrix.extension }} release-assets-${{ matrix.runtime }}/
+        
+        # Create run script for Linux
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+          echo '#!/bin/bash' > release-assets-${{ matrix.runtime }}/run.sh
+          echo 'echo "Starting Source Engine FastDownload Tool..."' >> release-assets-${{ matrix.runtime }}/run.sh
+          echo 'echo' >> release-assets-${{ matrix.runtime }}/run.sh
+          echo 'chmod +x ./'"${{ env.PROJECT_NAME }}" >> release-assets-${{ matrix.runtime }}/run.sh
+          echo './'"${{ env.PROJECT_NAME }}"' "$@"' >> release-assets-${{ matrix.runtime }}/run.sh
+          chmod +x release-assets-${{ matrix.runtime }}/run.sh
+        else
+          # Create batch file for Windows
+          echo '@echo off' > release-assets-${{ matrix.runtime }}/Run.bat
+          echo 'echo Starting Source Engine FastDownload Tool...' >> release-assets-${{ matrix.runtime }}/Run.bat
+          echo 'echo.' >> release-assets-${{ matrix.runtime }}/Run.bat
+          echo '%~dp0'"${{ env.PROJECT_NAME }}.exe"' %*' >> release-assets-${{ matrix.runtime }}/Run.bat
+          echo 'pause' >> release-assets-${{ matrix.runtime }}/Run.bat
+        fi
 
-    - name: Create ZIP archive
+    - name: Create ZIP archive for platform
       run: |
         $version = "1.0.0"
         if ($env:GITHUB_REF -like "refs/tags/*") {
           $version = $env:GITHUB_REF -replace "refs/tags/v", ""
         }
-        $zipName = "SourceEngineFastDownloadTool-v$version.zip"
-        Compress-Archive -Path ".\release-assets\*" -DestinationPath $zipName -Force
-        echo "ZIP_FILE=$zipName" >> $env:GITHUB_ENV
+        $zipName = "${{ env.PROJECT_NAME }}-v$version-${{ matrix.runtime }}.zip"
+        Compress-Archive -Path "./release-assets-${{ matrix.runtime }}/*" -DestinationPath $zipName -Force
+        echo "ZIP_FILE_${{ matrix.runtime }}=$zipName" >> $env:GITHUB_ENV
 
-    - name: Upload artifact
+    - name: Upload artifact for platform
       uses: actions/upload-artifact@v4
       with:
-        name: SourceEngineFastDownloadTool
-        path: ${{ env.ZIP_FILE }}
+        name: ${{ env.PROJECT_NAME }}-${{ matrix.runtime }}
+        path: ${{ env.ZIP_FILE_${{ matrix.runtime }} }}
+
+  create-release:
+    needs: build-multi-platform
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: List downloaded artifacts
+      run: ls -la ./artifacts
 
     - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: ${{ env.ZIP_FILE }}
+        files: |
+          ./artifacts/**/*.zip
         generate_release_notes: true
         draft: false
         prerelease: false
