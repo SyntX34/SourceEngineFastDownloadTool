@@ -47,6 +47,7 @@ jobs:
 
     - name: Publish single executable (Windows)
       if: matrix.os == 'windows-latest'
+      shell: powershell
       run: |
         dotnet publish `
           --configuration $env:BUILD_CONFIGURATION `
@@ -62,6 +63,7 @@ jobs:
 
     - name: Publish single executable (Linux)
       if: matrix.os != 'windows-latest'
+      shell: bash
       run: |
         dotnet publish \
           --configuration ${{ env.BUILD_CONFIGURATION }} \
@@ -75,28 +77,40 @@ jobs:
           -p:DebugSymbols=false \
           -p:EnableCompressionInSingleFile=true
 
-    - name: Prepare release folder
+    - name: Prepare release folder (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: powershell
+      run: |
+        mkdir release-assets-${{ matrix.runtime }}
+        try { cp config.json release-assets-${{ matrix.runtime }} } catch { Write-Host "config.json not found" }
+        try { cp filetypes.txt release-assets-${{ matrix.runtime }} } catch { Write-Host "filetypes.txt not found" }
+        cp ./publish-${{ matrix.runtime }}/${{ env.PROJECT_NAME }}${{ matrix.extension }} release-assets-${{ matrix.runtime }}
+
+        # Create batch file for Windows
+        '@echo off' | Out-File release-assets-${{ matrix.runtime }}/Run.bat -Encoding ascii
+        'echo Starting Source Engine FastDownload Tool...' | Out-File release-assets-${{ matrix.runtime }}/Run.bat -Append -Encoding ascii
+        'echo.' | Out-File release-assets-${{ matrix.runtime }}/Run.bat -Append -Encoding ascii
+        '%~dp0${{ env.PROJECT_NAME }}.exe %*' | Out-File release-assets-${{ matrix.runtime }}/Run.bat -Append -Encoding ascii
+        'pause' | Out-File release-assets-${{ matrix.runtime }}/Run.bat -Append -Encoding ascii
+
+    - name: Prepare release folder (Linux)
+      if: matrix.os != 'windows-latest'
+      shell: bash
       run: |
         mkdir release-assets-${{ matrix.runtime }}
         cp config.json release-assets-${{ matrix.runtime }}/ 2>/dev/null || echo "config.json not found"
         cp filetypes.txt release-assets-${{ matrix.runtime }}/ 2>/dev/null || echo "filetypes.txt not found"
         cp ./publish-${{ matrix.runtime }}/${{ env.PROJECT_NAME }}${{ matrix.extension }} release-assets-${{ matrix.runtime }}/
 
-        if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
-          echo '#!/bin/bash' > release-assets-${{ matrix.runtime }}/run.sh
-          echo 'echo "Starting Source Engine FastDownload Tool..."' >> release-assets-${{ matrix.runtime }}/run.sh
-          echo 'chmod +x ./${{ env.PROJECT_NAME }}' >> release-assets-${{ matrix.runtime }}/run.sh
-          echo './${{ env.PROJECT_NAME }} "$@"' >> release-assets-${{ matrix.runtime }}/run.sh
-          chmod +x release-assets-${{ matrix.runtime }}/run.sh
-        else
-          echo '@echo off' > release-assets-${{ matrix.runtime }}/Run.bat
-          echo 'echo Starting Source Engine FastDownload Tool...' >> release-assets-${{ matrix.runtime }}/Run.bat
-          echo 'echo.' >> release-assets-${{ matrix.runtime }}/Run.bat
-          echo '%~dp0${{ env.PROJECT_NAME }}.exe %*' >> release-assets-${{ matrix.runtime }}/Run.bat
-          echo 'pause' >> release-assets-${{ matrix.runtime }}/Run.bat
-        fi
+        # Create run script for Linux
+        echo '#!/bin/bash' > release-assets-${{ matrix.runtime }}/run.sh
+        echo 'echo "Starting Source Engine FastDownload Tool..."' >> release-assets-${{ matrix.runtime }}/run.sh
+        echo 'chmod +x ./${{ env.PROJECT_NAME }}' >> release-assets-${{ matrix.runtime }}/run.sh
+        echo './${{ env.PROJECT_NAME }} "$@"' >> release-assets-${{ matrix.runtime }}/run.sh
+        chmod +x release-assets-${{ matrix.runtime }}/run.sh
 
     - name: Create ZIP archive
+      shell: bash
       run: |
         version="${GITHUB_REF##*/}"
         zipName="${{ env.PROJECT_NAME }}-${version}-${{ matrix.runtime }}.zip"
