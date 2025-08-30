@@ -109,6 +109,10 @@ jobs:
         echo './${{ env.PROJECT_NAME }} "$@"' >> release-assets-${{ matrix.runtime }}/run.sh
         chmod +x release-assets-${{ matrix.runtime }}/run.sh
 
+    - name: Install zip (Linux only)
+      if: runner.os != 'Windows'
+      run: sudo apt-get update && sudo apt-get install -y zip
+
     - name: Create ZIP archive
       shell: bash
       run: |
