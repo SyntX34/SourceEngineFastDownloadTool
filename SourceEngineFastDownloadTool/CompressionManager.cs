@@ -87,10 +87,41 @@ namespace SourceEngineFastDownloadTool
             }
         }
 
+        private static bool CompressWithBzip2Linux(string sourcePath, string destPath)
+        {
+            try
+            {
+                var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "bzip2",
+                        Arguments = $"-c -1 \"{sourcePath}\" > \"{destPath}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true
+                    }
+                };
+
+                process.Start();
+                process.WaitForExit();
+                return process.ExitCode == 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static bool CompressFile(string sourcePath, string destPath)
         {
             try
             {
+                if (PlatformUtils.IsLinux || PlatformUtils.IsOSX)
+                {
+                    return CompressWithBzip2Linux(sourcePath, destPath);
+                }
+
                 switch (CurrentTool)
                 {
                     case CompressionTool.SevenZip:
